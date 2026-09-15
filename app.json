@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "EdControl AI",
+    "slug": "edcontrol-ai-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTabletMode": true,
+      "bundleIdentifier": "com.edcontrol.ai.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1e293b"
+      },
+      "package": "com.edcontrol.ai.mobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "userInterfaceStyle": "dark"
+  }
+}
