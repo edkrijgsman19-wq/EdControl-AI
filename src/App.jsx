@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, FileText, Upload, MapPin, CheckCircle2, Cpu, Layers, Download, ArrowLeft, RefreshCw, Trash2, Plus } from 'lucide-react';
+import { Camera, FileText, Upload, MapPin, CheckCircle2, Cpu, Layers, Download, ArrowLeft, RefreshCw, Trash2, Plus, Database, ArrowUpToLine, ArrowDownToLine } from 'lucide-react';
 
 const DEFAULT_PROJECTS = [
   { id: 1, name: 'St. Antonius Ziekenhuis', sector: 'Ziekenhuizen', location: 'OK-Complex 3' },
@@ -32,27 +32,101 @@ export default function EdControlAI() {
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
+  const [lastSavedLabel, setLastSavedLabel] = useState('Niet opgeslagen');
 
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const importInputRef = useRef(null);
 
   const activeProject = projects.find(project => project.id === activeProjectId) ?? projects[0] ?? DEFAULT_PROJECTS[0];
   const selectedDrawing = drawings.find(drawing => drawing.id === selectedDrawingId) ?? null;
   const activePin = pins.find(pin => pin.id === activePinId) ?? null;
 
+  const persistState = (nextProjects = projects, nextDrawings = drawings, nextPins = pins, nextActiveProjectId = activeProjectId, nextSelectedDrawingId = selectedDrawingId, nextActivePinId = activePinId) => {
+    const payload = {
+      projects: nextProjects,
+      activeProjectId: nextActiveProjectId,
+      drawings: nextDrawings,
+      selectedDrawingId: nextSelectedDrawingId,
+      pins: nextPins,
+      activePinId: nextActivePinId,
+      savedAt: new Date().toISOString()
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    setLastSavedLabel(`Opgeslagen: ${new Date().toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}`);
+  };
+
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        projects,
-        activeProjectId,
-        drawings,
-        selectedDrawingId,
-        pins,
-        activePinId,
-      })
-    );
-  }, [projects, activeProjectId, drawings, selectedDrawingId, pins, activePinId]);
+    persistState(projects, drawings, pins, activeProjectId, selectedDrawingId, activePinId);
+  }, [projects, drawings, pins, activeProjectId, selectedDrawingId, activePinId]);
+
+  const addProject = () => {
+    const nextId = Date.now();
+    const newProject = {
+      id: nextId,
+      name: `Nieuw project ${projects.length + 1}`,
+      sector: 'Kantoren',
+      location: 'Locatie aanmaken'
+    };
+
+    const nextProjects = [...projects, newProject];
+    setProjects(nextProjects);
+    setActiveProjectId(nextId);
+    persistState(nextProjects, drawings, pins, nextId, selectedDrawingId, activePinId);
+  };
+
+  const exportProjectBackup = () => {
+    const payload = {
+      projects,
+      drawings,
+      pins,
+      activeProjectId,
+      selectedDrawingId,
+      activePinId,
+      exportedAt: new Date().toISOString()
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'edcontrol-ai-backup.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const importProjectBackup = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        if (!parsed || !Array.isArray(parsed.projects)) {
+          alert('Ongeldig backup-bestand.');
+          return;
+        }
+
+        setProjects(parsed.projects);
+        setActiveProjectId(parsed.activeProjectId ?? parsed.projects[0]?.id ?? 1);
+        setDrawings(parsed.drawings ?? []);
+        setSelectedDrawingId(parsed.selectedDrawingId ?? null);
+        setPins(parsed.pins ?? []);
+        setActivePinId(parsed.activePinId ?? null);
+        setCurrentScreen('home');
+        persistState(parsed.projects, parsed.drawings ?? [], parsed.pins ?? [], parsed.activeProjectId ?? parsed.projects[0]?.id ?? 1, parsed.selectedDrawingId ?? null, parsed.activePinId ?? null);
+      } catch (error) {
+        alert('Het backup-bestand kon niet worden gelezen.');
+      }
+    };
+
+    reader.readAsText(file);
+    event.target.value = '';
+  };
 
   const resetInspectionForm = () => {
     setPhoto(null);
@@ -73,9 +147,11 @@ export default function EdControlAI() {
       url
     };
 
-    setDrawings(previous => [...previous, newDrawing]);
+    const nextDrawings = [...drawings, newDrawing];
+    setDrawings(nextDrawings);
     setSelectedDrawingId(newDrawing.id);
     setCurrentScreen('drawings');
+    persistState(projects, nextDrawings, pins, activeProjectId, newDrawing.id, activePinId);
     event.target.value = '';
   };
 
@@ -97,10 +173,12 @@ export default function EdControlAI() {
       createdAt: new Date().toISOString()
     };
 
-    setPins(previous => [...previous, newPin]);
+    const nextPins = [...pins, newPin];
+    setPins(nextPins);
     setActivePinId(newPin.id);
     resetInspectionForm();
     setCurrentScreen('inspect');
+    persistState(projects, drawings, nextPins, activeProjectId, selectedDrawingId, newPin.id);
   };
 
   const handleCapture = (event) => {
@@ -140,11 +218,13 @@ export default function EdControlAI() {
       setAiResult(mockResult);
 
       if (activePinId) {
-        setPins(previous => previous.map(pin =>
+        const nextPins = pins.map(pin =>
           pin.id === activePinId
             ? { ...pin, note, photo, aiResult: mockResult }
             : pin
-        ));
+        );
+        setPins(nextPins);
+        persistState(projects, drawings, nextPins, activeProjectId, selectedDrawingId, activePinId);
       }
 
       setLoading(false);
@@ -152,7 +232,10 @@ export default function EdControlAI() {
   };
 
   const removePin = (pinId) => {
-    setPins(previous => previous.filter(pin => pin.id !== pinId));
+    const nextPins = pins.filter(pin => pin.id !== pinId);
+    setPins(nextPins);
+    persistState(projects, drawings, nextPins, activeProjectId, selectedDrawingId, null);
+
     if (activePinId === pinId) {
       resetInspectionForm();
       setCurrentScreen('drawings');
@@ -255,7 +338,36 @@ export default function EdControlAI() {
         {currentScreen === 'home' && (
           <div className="space-y-6">
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-lg">
-              <h2 className="text-md font-semibold mb-3 text-slate-200">Actieve Locatie & Project</h2>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <h2 className="text-md font-semibold text-slate-200">Actieve Locatie & Project</h2>
+                <span className="text-[10px] text-slate-300 bg-slate-700 px-2 py-1 rounded-full">{lastSavedLabel}</span>
+              </div>
+
+              <div className="flex flex-wrap gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={addProject}
+                  className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Project toevoegen
+                </button>
+                <button
+                  type="button"
+                  onClick={exportProjectBackup}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1"
+                >
+                  <ArrowUpToLine className="w-3.5 h-3.5" /> Backup export
+                </button>
+                <button
+                  type="button"
+                  onClick={() => importInputRef.current?.click()}
+                  className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-1"
+                >
+                  <ArrowDownToLine className="w-3.5 h-3.5" /> Backup import
+                </button>
+                <input ref={importInputRef} type="file" accept="application/json" className="hidden" onChange={importProjectBackup} />
+              </div>
+
               <select
                 value={activeProjectId}
                 onChange={(event) => setActiveProjectId(Number(event.target.value))}
@@ -284,10 +396,10 @@ export default function EdControlAI() {
                 className="bg-gradient-to-br from-emerald-900/40 to-slate-800 border border-emerald-500/30 rounded-xl p-5 cursor-pointer hover:border-emerald-500 transition shadow-md"
               >
                 <div className="bg-emerald-500/20 w-10 h-10 rounded-lg flex items-center justify-center mb-3 text-emerald-400">
-                  <FileText className="w-5 h-5" />
+                  <Database className="w-5 h-5" />
                 </div>
-                <h3 className="font-bold text-lg mb-1">Uitvoerbare Rapporten</h3>
-                <p className="text-xs text-slate-400">Bekijk alle opgeslagen componenten, TCO-berekeningen en benodigde appendages.</p>
+                <h3 className="font-bold text-lg mb-1">Data & Rapporten</h3>
+                <p className="text-xs text-slate-400">Inspecties worden lokaal opgeslagen en kunnen als backup worden geëxporteerd.</p>
               </div>
             </div>
           </div>
