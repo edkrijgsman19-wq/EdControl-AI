@@ -1,22 +1,50 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Camera, FileText, Upload, MapPin, CheckCircle2, AlertTriangle, ShieldAlert, Cpu, Layers, Download, ArrowLeft, RefreshCw } from 'lucide-react';
 
+const DEFAULT_PROJECTS = [
+  { id: 1, name: 'St. Antonius Ziekenhuis', sector: 'Ziekenhuizen', location: 'OK-Complex 3' },
+  { id: 2, name: 'Kantoorpand Zenith', sector: 'Kantoren', location: 'Dakopbouw - Luchtbehandeling' },
+  { id: 3, name: 'Basischool De Kring', sector: 'Scholen', location: 'Ketelhuis' }
+];
+
+const STORAGE_KEY = 'edcontrol-ai-state-v1';
+
+function safeParseStoredState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
+
 export default function EdControlAI() {
-  const [currentScreen, setCurrentScreen] = useState('home'); // 'home', 'drawings', 'inspect', 'report'
-  const [projects, setProjects] = useState([
-    { id: 1, name: 'St. Antonius Ziekenhuis', sector: 'Ziekenhuizen', location: 'OK-Complex 3' },
-    { id: 2, name: 'Kantoorpand Zenith', sector: 'Kantoren', location: 'Dakopbouw - Luchtbehandeling' },
-    { id: 3, name: 'Basischool De Kring', sector: 'Scholen', location: 'Ketelhuis' }
-  ]);
-  const [activeProject, setActiveProject] = useState(projects[0]);
-  
-  // PDF & Pins State
-  const [drawings, setDrawings] = useState([]); // [{ id, name, url }]
+  const [currentScreen, setCurrentScreen] = useState('home');
+
+  const [projects, setProjects] = useState(() => {
+    const stored = safeParseStoredState();
+    return stored?.projects?.length ? stored.projects : DEFAULT_PROJECTS;
+  });
+
+  const [activeProject, setActiveProject] = useState(() => {
+    const stored = safeParseStoredState();
+    const projectId = stored?.activeProjectId ?? DEFAULT_PROJECTS[0].id;
+    return (stored?.projects?.length ? stored.projects : DEFAULT_PROJECTS).find(p => p.id === projectId) || DEFAULT_PROJECTS[0];
+  });
+
+  const [drawings, setDrawings] = useState(() => {
+    const stored = safeParseStoredState();
+    return stored?.drawings ?? [];
+  });
+
   const [selectedDrawing, setSelectedDrawing] = useState(null);
-  const [pins, setPins] = useState([]); // [{ id, x, y, drawingId, note, photo, aiResult }]
+  const [pins, setPins] = useState(() => {
+    const stored = safeParseStoredState();
+    return stored?.pins ?? [];
+  });
   const [activePin, setActivePin] = useState(null);
 
-  // Active Inspection State
   const [photo, setPhoto] = useState(null);
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
@@ -25,19 +53,36 @@ export default function EdControlAI() {
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
 
-  // Handle PDF/Drawing Upload
+  useEffect(() => {
+    const state = {
+      projects,
+      drawings,
+      pins,
+      activeProjectId: activeProject?.id ?? DEFAULT_PROJECTS[0].id
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }, [projects, drawings, pins, activeProject]);
+
   const handleDrawingUpload = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const fileUrl = URL.createObjectURL(file);
-      const newDrawing = { id: Date.now(), name: file.name, url: fileUrl };
-      setDrawings([...drawings, newDrawing]);
-      setSelectedDrawing(newDrawing);
-    }
+    if (!file) return;
+
+    const fileUrl = URL.createObjectURL(file);
+    const newDrawing = {
+      id: Date.now(),
+      name: file.name,
+      url: fileUrl,
+      type: file.type || 'application/pdf'
+    };
+
+    setDrawings((prev) => [...prev, newDrawing]);
+    setSelectedDrawing(newDrawing);
+    setCurrentScreen('drawings');
   };
 
-  // Handle Click on Drawing to Place Pin
   const handleDrawingClick = (e) => {
+    if (!selectedDrawing) return;
+
     const rect = e.currentTarget.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
@@ -52,7 +97,7 @@ export default function EdControlAI() {
       aiResult: null
     };
 
-    setPins([...pins, newPin]);
+    setPins((prev) => [...prev, newPin]);
     setActivePin(newPin);
     setPhoto(null);
     setNote('');
@@ -60,57 +105,108 @@ export default function EdControlAI() {
     setCurrentScreen('inspect');
   };
 
-  // Handle Photo Capture
   const handleCapture = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhoto(reader.result);
-      };
-      reader.readAsDataURL(file);
-    }
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setPhoto(reader.result);
+    };
+    reader.readAsDataURL(file);
   };
 
-  // Run AI Inspection Analysis
   const runAIAnalysis = () => {
     setLoading(true);
     setTimeout(() => {
       const mockResult = {
-        component: "Luchtbehandelingskast (LBK) Sectie 2 - Warmtewisselaar & Regelklep",
-        conditionScore: "Score 4 (Slechte conditie / Ernstige gebreken)",
-        rtl: "1 tot 2 jaar resterend",
-        sectorImpact: activeProject.sector === 'Ziekenhuizen' 
-          ? "Kritiek risico voor drukverschillen in operatiekamers en microbiologische continuïteit." 
-          : activeProject.sector === 'Kantoren' 
-          ? "Verhoogd energieverlies, afname comfort en risico op overschrijding energielabel-eisen." 
-          : "Slecht binnenklimaat en verhoogde CO2-waarden door verouderde klepstandaarden.",
-        strategy: "Directe Vervanging aanbevolen voor het stookseizoen.",
-        tcoPayback: "Investering €12.500 | Verwachte energiewinst: €3.400/jaar | Payback: 3.7 jaar",
+        component: 'Luchtbehandelingskast (LBK) Sectie 2 - Warmtewisselaar & Regelklep',
+        conditionScore: 'Score 4 (Slechte conditie / Ernstige gebreken)',
+        rtl: '1 tot 2 jaar resterend',
+        sectorImpact: activeProject.sector === 'Ziekenhuizen'
+          ? 'Kritiek risico voor drukverschillen in operatiekamers en microbiologische continuïteit.'
+          : activeProject.sector === 'Kantoren'
+          ? 'Verhoogd energieverlies, afname comfort en risico op overschrijding energielabel-eisen.'
+          : 'Slecht binnenklimaat en verhoogde CO2-waarden door verouderde klepstandaarden.',
+        strategy: 'Directe Vervanging aanbevolen voor het stookseizoen.',
+        tcoPayback: 'Investering €12.500 | Verwachte energiewinst: €3.400/jaar | Payback: 3.7 jaar',
         materials: [
-          "1x Platenwarmtewisselaar (RVS 316, spec. capaciteit 4500 m3/h)",
-          "2x Regelaandrijving 24V (Belimo NM24A-SR)",
-          "4x Flenzen PN16 DN50 inclusief AFM-pakkingen",
-          "1x Modulating 3-weg regelklep (Siemens VVF43...)"
+          '1x Platenwarmtewisselaar (RVS 316, spec. capaciteit 4500 m3/h)',
+          '2x Regelaandrijving 24V (Belimo NM24A-SR)',
+          '4x Flenzen PN16 DN50 inclusief AFM-pakkingen',
+          '1x Modulating 3-weg regelklep (Siemens VVF43...)'
         ]
       };
 
       setAiResult(mockResult);
+
       if (activePin) {
-        setPins(pins.map(p => p.id === activePin.id ? { ...p, aiResult: mockResult, photo, note } : p));
+        setPins(prev => prev.map(pin =>
+          pin.id === activePin.id ? { ...pin, aiResult: mockResult, photo, note } : pin
+        ));
       }
+
       setLoading(false);
-    }, 2000);
+    }, 1500);
   };
+
+  const handleReportDownload = () => {
+    const completedPins = pins.filter(pin => pin.aiResult);
+    if (!completedPins.length) return;
+
+    const reportHtml = `
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>EdControl AI - Inspectierapport</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 32px; color: #0f172a; }
+            h1 { margin-bottom: 8px; }
+            .meta { color: #475569; margin-bottom: 24px; }
+            .card { border: 1px solid #cbd5e1; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+            ul { margin: 8px 0 0 18px; }
+            strong { color: #1e293b; }
+          </style>
+        </head>
+        <body>
+          <h1>EdControl AI - Inspectierapport</h1>
+          <div class="meta">Project: ${activeProject.name}<br />Sector: ${activeProject.sector}<br />Datum: ${new Date().toLocaleDateString('nl-NL')}</div>
+          ${completedPins.map((pin, index) => `
+            <div class="card">
+              <strong>Punt ${index + 1}</strong>
+              <p><strong>Component:</strong> ${pin.aiResult.component}</p>
+              <p><strong>Conditie:</strong> ${pin.aiResult.conditionScore}</p>
+              <p><strong>Strategie:</strong> ${pin.aiResult.strategy}</p>
+              <p><strong>TCO:</strong> ${pin.aiResult.tcoPayback}</p>
+              <ul>
+                ${pin.aiResult.materials.map(item => `<li>${item}</li>`).join('')}
+              </ul>
+            </div>
+          `).join('')}
+        </body>
+      </html>
+    `;
+
+    const blob = new Blob([reportHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'edcontrol-ai-rapport.html';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const selectedDrawingIsPdf = selectedDrawing?.type === 'application/pdf' || selectedDrawing?.name?.toLowerCase().endsWith('.pdf');
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans">
-      {/* Header */}
       <header className="bg-slate-800 border-b border-slate-700 p-4 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center space-x-3">
           {currentScreen !== 'home' && (
-            <button 
-              onClick={() => setCurrentScreen('home')} 
+            <button
+              onClick={() => setCurrentScreen('home')}
               className="p-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition"
             >
               <ArrowLeft className="w-5 h-5" />
@@ -124,14 +220,14 @@ export default function EdControlAI() {
           </div>
         </div>
         <div className="flex gap-2">
-          <button 
-            onClick={() => setCurrentScreen('drawings')} 
+          <button
+            onClick={() => setCurrentScreen('drawings')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 ${currentScreen === 'drawings' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'}`}
           >
             <FileText className="w-4 h-4" /> Tekeningen
           </button>
-          <button 
-            onClick={() => setCurrentScreen('report')} 
+          <button
+            onClick={() => setCurrentScreen('report')}
             className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 ${currentScreen === 'report' ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-300'}`}
           >
             <Download className="w-4 h-4" /> Rapport
@@ -139,19 +235,17 @@ export default function EdControlAI() {
         </div>
       </header>
 
-      {/* Main Container */}
       <main className="flex-1 p-4 max-w-4xl mx-auto w-full">
-        
-        {/* SCREEN 1: HOME / DASHBOARD */}
         {currentScreen === 'home' && (
           <div className="space-y-6">
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-lg">
               <h2 className="text-md font-semibold mb-3 text-slate-200">Actieve Locatie & Project</h2>
-              <select 
+              <select
+                value={activeProject?.id ?? 1}
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
                 onChange={(e) => {
                   const proj = projects.find(p => p.id === Number(e.target.value));
-                  setActiveProject(proj);
+                  if (proj) setActiveProject(proj);
                 }}
               >
                 {projects.map(p => (
@@ -161,7 +255,7 @@ export default function EdControlAI() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div 
+              <div
                 onClick={() => setCurrentScreen('drawings')}
                 className="bg-gradient-to-br from-blue-900/40 to-slate-800 border border-blue-500/30 rounded-xl p-5 cursor-pointer hover:border-blue-500 transition shadow-md"
               >
@@ -172,7 +266,7 @@ export default function EdControlAI() {
                 <p className="text-xs text-slate-400">Upload bouw- en installatietekeningen, tik op locaties en koppel direct AI-inspecties.</p>
               </div>
 
-              <div 
+              <div
                 onClick={() => setCurrentScreen('report')}
                 className="bg-gradient-to-br from-emerald-900/40 to-slate-800 border border-emerald-500/30 rounded-xl p-5 cursor-pointer hover:border-emerald-500 transition shadow-md"
               >
@@ -186,7 +280,6 @@ export default function EdControlAI() {
           </div>
         )}
 
-        {/* SCREEN 2: PDF DRAWINGS & INTERACTIVE PINS */}
         {currentScreen === 'drawings' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center bg-slate-800 p-4 rounded-xl border border-slate-700">
@@ -203,22 +296,24 @@ export default function EdControlAI() {
             {selectedDrawing ? (
               <div className="bg-slate-800 border border-slate-700 rounded-xl p-3 relative overflow-hidden">
                 <p className="text-xs text-blue-400 mb-2 font-medium">👉 Tik ergens op de tekening om een inspectiepunt te plaatsen.</p>
-                <div 
+                <div
                   className="relative border border-slate-600 rounded bg-slate-950 overflow-hidden cursor-crosshair min-h-[350px] flex items-center justify-center"
                   onClick={handleDrawingClick}
                 >
-                  {/* Mock representation of PDF viewer canvas */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600 p-6 text-center">
-                    <FileText className="w-16 h-16 mb-2 opacity-40" />
-                    <p className="text-sm font-medium text-slate-400">{selectedDrawing.name}</p>
-                    <span className="text-[10px] text-slate-500 mt-1">Actieve Tekeningen Viewer</span>
-                  </div>
+                  {selectedDrawingIsPdf ? (
+                    <iframe
+                      src={selectedDrawing.url}
+                      title={selectedDrawing.name}
+                      className="w-full h-[500px] bg-white"
+                    />
+                  ) : (
+                    <img src={selectedDrawing.url} alt={selectedDrawing.name} className="max-h-[500px] w-full object-contain" />
+                  )}
 
-                  {/* Render Pins */}
                   {pins.filter(p => p.drawingId === selectedDrawing.id).map((pin, idx) => (
-                    <div 
+                    <div
                       key={pin.id}
-                      className="absolute w-6 h-6 bg-red-600 border-2 border-white rounded-full flex items-center justify-center text-[10px] font-bold shadow-lg transform -translate-x-1/2 -translate-y-1/2 cursor-pointer hover:scale-110 transition"
+                      className="absolute w-6 h-6 bg-red-600 border-2 border-white rounded-full flex items-center justify-center text-[10px] font-bold shadow-lg transform -translate-x-1/2 -translate-y-1/2"
                       style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -243,21 +338,19 @@ export default function EdControlAI() {
           </div>
         )}
 
-        {/* SCREEN 3: INSPECTION & AI ANALYSIS */}
         {currentScreen === 'inspect' && (
           <div className="space-y-4">
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-4">
               <h2 className="font-semibold text-sm mb-2 text-blue-400 flex items-center gap-1.5">
                 <MapPin className="w-4 h-4 text-red-500" /> Inspectiepunt op Tekening
               </h2>
-              
-              {/* Photo Capture Section */}
+
               <div className="my-3">
                 {photo ? (
                   <div className="relative rounded-lg overflow-hidden border border-slate-600 h-48">
                     <img src={photo} alt="Inspectie" className="w-full h-full object-cover" />
-                    <button 
-                      onClick={() => setPhoto(null)} 
+                    <button
+                      onClick={() => setPhoto(null)}
                       className="absolute bottom-2 right-2 bg-slate-900/80 text-xs px-3 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 transition"
                     >
                       Opnieuw foto maken
@@ -274,10 +367,9 @@ export default function EdControlAI() {
                 )}
               </div>
 
-              {/* Notes Input */}
               <div className="mb-4">
                 <label className="text-xs text-slate-400 mb-1 block">Notities / Geobserveerd gebrek:</label>
-                <textarea 
+                <textarea
                   rows="2"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
@@ -286,17 +378,16 @@ export default function EdControlAI() {
                 ></textarea>
               </div>
 
-              <button 
+              <button
                 onClick={runAIAnalysis}
                 disabled={loading || !photo}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition shadow-lg"
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-800 disabled:cursor-not-allowed text-white py-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2"
               >
                 {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
                 {loading ? 'AI analyseert NEN 2767 & onderdelen...' : 'Start AI Beoordeling & Advies'}
               </button>
             </div>
 
-            {/* AI Results Section */}
             {aiResult && (
               <div className="bg-slate-800 border border-blue-500/40 rounded-xl p-4 space-y-4 shadow-xl">
                 <div className="flex items-center justify-between border-b border-slate-700 pb-3">
@@ -339,18 +430,17 @@ export default function EdControlAI() {
           </div>
         )}
 
-        {/* SCREEN 4: EXPORT REPORT */}
         {currentScreen === 'report' && (
           <div className="space-y-4">
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="font-bold text-sm">Inspectierapport & Onderdelenlijst</h2>
-                <button 
-                  onClick={() => alert('PDF Rapport succesvol gegenereerd en gedeeld!')}
+                <button
+                  onClick={handleReportDownload}
                   className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1 transition disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={pins.filter(p => p.aiResult).length === 0}
                 >
-                  <Download className="w-4 h-4" /> Download PDF Rapport
+                  <Download className="w-4 h-4" /> Download HTML Rapport
                 </button>
               </div>
 
@@ -378,7 +468,6 @@ export default function EdControlAI() {
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
